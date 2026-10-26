@@ -183,7 +183,11 @@ const CARD_RULES = [
   [/든든한 파트너|파트너$|^ZeroEyes$|^store$/,'메인']
 ];
 const toCard = p => { p = String(p); for (const [re,v] of CARD_RULES) if (re.test(p)) return v; return '기타'; };
-const GA_MAIN = ['탁구장','스터디카페','메인','제품소개서','QR PASS','골프연습장','배리어프리','공간예약','피트니스'];
+const GA_MAIN = ['탁구장','스터디카페','메인','제품소개서','QR PASS','골프연습장','배리어프리','공간예약','실내체육시설'];
+/* 이탈률·체류시간 측정이 바뀐 시점.
+   8/14 공홈을 Webflow → GitHub 으로 옮기면서 추적 신호가 바뀌었고,
+   9/16 GTM 재설정으로 고정됐다. 첫 온전한 주 = 9/21주(46286), 첫 온전한 달 = 10월. */
+const GA_FIX_WK = 46286, GA_FIX_MON = '2026-10';
 
 /* ═══════════════════════════════════════════════════════════
    집계
@@ -520,6 +524,24 @@ const LBL = { id:'lbl', afterDatasetsDraw(c){
   }
 }};
 const LBL_BAR = LBL, LBL_STACK = LBL, LBL_LINE = LBL, LBL_EDGE = LBL;
+
+/* 측정기준이 달랐던 구간을 회색으로 덮는다 (이탈률·체류시간 차트 전용) */
+const GACUT = { id:'gacut', beforeDatasetsDraw(c){
+  const o = (c.options.plugins||{}).gacut; if (!o || !o.cut) return;
+  const k = o.cut, x = c.scales.x, a = c.chartArea, ctx = c.ctx;
+  if (k <= 0) return;
+  const px = i => x.getPixelForValue(i);
+  const right = k > x.max ? a.right : (k === 0 ? a.left : (px(k-1) + px(k)) / 2);
+  ctx.save();
+  ctx.fillStyle = 'rgba(100,116,139,.14)';
+  ctx.fillRect(a.left, a.top, Math.max(0, right - a.left), a.bottom - a.top);
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(right, a.top); ctx.lineTo(right, a.bottom); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#64748b'; ctx.font = '10px -apple-system,system-ui,sans-serif'; ctx.textAlign = 'right';
+  if (right - a.left > 80) ctx.fillText('측정기준 다름 — 비교 불가', right - 6, a.top + 12);
+  ctx.restore();
+} };
 
 /* ═══ 광고 탭 ═══ */
 let AD_VIEW = 'sum', AD_CHAN = '네이버', AD_RANGE = 'all', AD_CAMP = null;
@@ -904,6 +926,7 @@ function vGa(){
 
   document.getElementById('body').innerHTML = `
   ${(stale||lag) ? `<div class="hint">⚠ <b>GA는 ${md(W[li])}주까지만 적재돼 있습니다${lag ? ` — 다른 탭(${md(W[D.li])}주)보다 ${D.li-li}주 뒤처짐` : ''}.</b> GA는 수동으로 붙여넣는 데이터라 최신이 아닙니다${D.F['GA'] ? ` (마지막 데이터 ${D.F['GA'].last}, ${D.F['GA'].ago})` : ''}. 아래 숫자는 <b>${md(W[li])}주 기준</b>이며 전주는 ${md(W[pi])}주입니다.</div>` : ''}
+  <div class="hint" style="background:#f1f5f9;border-color:#cbd5e1">⚠ <b>이탈률·체류시간은 9/21주부터만 비교하세요.</b> 8/14 공홈을 Webflow에서 GitHub으로 옮기면서 추적 신호가 줄었고, 9/16 GTM 재설정으로 고정됐습니다. <b>그전 8%대는 과소집계입니다</b> — 지금 50%대가 정상값이고 방문자가 줄은 게 아닙니다. <span class="muted">방문수·전환·상담인입은 영향 없습니다.</span></div>
   <div class="kpis">
     <div class="kpi"><div class="lb">공홈 방문수</div><div class="v">${nf(t.pv[li])}</div>
       <div class="d">전주 ${nf(t.pv[pi])} ${dv(t.pv[li],t.pv[pi])}</div></div>
@@ -976,7 +999,9 @@ function vGa(){
          tension:.3, pointRadius:2, spanGaps:true},
         {label:'체류시간(초)', data:ssr, borderColor:'#6d28d9', backgroundColor:'transparent',
          tension:.3, pointRadius:2, yAxisID:'y1', spanGaps:true} ]},
-      options: baseOpt(false, { y1:{position:'right', ticks:T10, grid:{display:false}, beginAtZero:true} }, {lines:'edge'}), plugins:[LBL] });
+      options: (() => { const o = baseOpt(false, { y1:{position:'right', ticks:T10, grid:{display:false}, beginAtZero:true} }, {lines:'edge'});
+        (o.plugins = o.plugins || {}).gacut = { cut: (() => { const k = W.slice(0, gN).findIndex(w => w >= GA_FIX_WK); return k < 0 ? gN : k; })() };
+        return o; })(), plugins:[LBL, GACUT] });
   }
 }
 
@@ -1188,10 +1213,10 @@ function wkRep(){
     </tbody></table></div></div>
 
   <div class="card"><h3>⑦ 페이지별 방문 품질</h3><div class="note">${ml(cur)} GA · 방문·이탈률·체류시간 <span class="muted">※ 페이지 제목 개편분은 '기타'로 분류됩니다</span>
-      <div class="muted" style="margin-top:3px">⚠ 이탈률·체류시간은 8/5부터 GA 원본 CSV 기준입니다. 그 이전(시트 적재분)과 산출 기준이 달라 <b>월간 비교는 하지 마세요</b> — 방문수·전환은 기준이 같아 비교 가능합니다.</div></div>
+      ${cur < GA_FIX_MON ? `<div class="muted" style="margin-top:3px;color:#b45309">⚠ <b>${ml(cur)} 이탈률·체류시간은 쓰지 마세요.</b> 8/14 공홈을 Webflow에서 GitHub으로 옮기면서 추적 신호가 줄었고 9/16 GTM 재설정으로 고정됐습니다 — ${ml(cur)}은 옮기는 중간에 걸쳐 있어 앞뒤가 섞여 있습니다. <b>10월부터 비교 가능</b>합니다. 방문수·전환은 영향 없습니다.</div>` : ''}</div>
     <div class="tblwrap"><table><thead><tr><th>페이지</th><th>${ml(prv)} 방문</th><th>${ml(cur)} 방문</th><th>증감</th><th>이탈률</th><th>체류</th></tr></thead><tbody>
       <tr class="tot"><td>전체</td><td>${nf(P.ga.pv)}</td><td><b>${nf(A.ga.pv)}</b></td><td>${d1(A.ga.pv,P.ga.pv)}</td>
-        <td>${bounce(A).toFixed(1)}%</td><td>${sess(A)}초</td></tr>
+        <td${cur < GA_FIX_MON ? ' class="wold"' : ''}>${bounce(A).toFixed(1)}%</td><td${cur < GA_FIX_MON ? ' class="wold"' : ''}>${sess(A)}초</td></tr>
       ${pages.map(p=>{const a=A.ga.byPage[p]||{pv:0,bw:0,sw:0}, q=P.ga.byPage[p]||{pv:0,bw:0,sw:0};
         return `<tr><td>${p}</td><td>${z0(q.pv)}</td><td><b>${z0(a.pv)}</b></td>
         <td>${a.pv?d1(a.pv,q.pv):'<span class="muted">–</span>'}</td>
